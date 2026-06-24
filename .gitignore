@@ -1,0 +1,5 @@
+tiktok_cookies.json
+debug_screenshot.png
+__pycache__/
+*.pyc
+.env

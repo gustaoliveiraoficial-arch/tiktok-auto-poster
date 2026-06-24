@@ -1,0 +1,78 @@
+name: TikTok Auto Post
+
+on:
+  schedule:
+    # Horários em UTC (Brasil = UTC-3)
+    - cron: '0 12 * * *'   # 09:00 BRT
+    - cron: '0 15 * * *'   # 12:00 BRT
+    - cron: '0 18 * * *'   # 15:00 BRT
+    - cron: '0 21 * * *'   # 18:00 BRT
+    - cron: '0 22 * * *'   # 19:00 BRT
+    - cron: '0 23 * * *'   # 20:00 BRT
+    - cron: '0 0 * * *'    # 21:00 BRT
+    - cron: '0 1 * * *'    # 22:00 BRT
+    - cron: '0 2 * * *'    # 23:00 BRT
+  workflow_dispatch:        # Permite rodar manualmente pelo GitHub
+
+permissions:
+  contents: write           # Necessário para commitar remoção do vídeo
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verifica se há vídeos na fila
+        id: check_queue
+        run: |
+          count=$(find queue/ -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.avi" -o -name "*.mkv" -o -name "*.webm" \) | wc -l)
+          echo "count=$count" >> $GITHUB_OUTPUT
+          echo "Vídeos na fila: $count"
+
+      - name: Pula se fila vazia
+        if: steps.check_queue.outputs.count == '0'
+        run: |
+          echo "Nenhum vídeo na fila. Encerrando."
+          exit 0
+
+      - name: Instala Python
+        if: steps.check_queue.outputs.count != '0'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instala dependências
+        if: steps.check_queue.outputs.count != '0'
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Posta vídeo no TikTok
+        if: steps.check_queue.outputs.count != '0'
+        env:
+          TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
+        run: python main.py
+
+      - name: Commita alterações (vídeo movido de queue/ para posted/)
+        if: steps.check_queue.outputs.count != '0'
+        run: |
+          git config user.name "TikTok Bot"
+          git config user.email "bot@passoapasso.com"
+          git add queue/ posted/
+          git diff --staged --quiet || git commit -m "posted: $(date '+%Y-%m-%d %H:%M BRT')"
+          git push
+
+      - name: Salva screenshot de debug (se falhar)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: debug_screenshot.png
+          if-no-files-found: ignore
