@@ -1,8 +1,8 @@
 """
 TikTok Auto Poster
 ==================
-Pega o primeiro vídeo da pasta queue/, posta no TikTok e move para posted/.
-O nome do arquivo (sem extensão) é usado como legenda.
+Pega o primeiro vídeo da pasta queue/, analisa o conteúdo com IA,
+gera uma legenda viral, posta no TikTok e move para posted/.
 
 Rode via GitHub Actions nos horários agendados.
 """
@@ -12,6 +12,7 @@ import sys
 import shutil
 from pathlib import Path
 from src.tiktok_poster import post_to_tiktok
+from src.caption_generator import analyze_and_generate_caption
 
 QUEUE_DIR = Path("queue")
 POSTED_DIR = Path("posted")
@@ -27,11 +28,6 @@ def get_next_video() -> Path | None:
     return videos[0] if videos else None
 
 
-def get_caption_from_filename(video_path: Path) -> str:
-    """Usa o nome do arquivo como legenda (sem a extensão)."""
-    return video_path.stem
-
-
 def main():
     print("=" * 50)
     print("TikTok Auto Poster — iniciando")
@@ -45,17 +41,23 @@ def main():
 
     print(f"Próximo vídeo: {video.name}")
 
-    # Legenda = nome do arquivo
-    caption = get_caption_from_filename(video)
-    print(f"Legenda: {caption}")
-
-    # Cookies do TikTok (vem do GitHub Secret)
+    # Verifica secrets
     cookies_json = os.environ.get("TIKTOK_COOKIES", "")
     if not cookies_json:
         print("ERRO: Secret TIKTOK_COOKIES não configurado.")
         sys.exit(1)
 
+    if not os.environ.get("GROQ_API_KEY"):
+        print("ERRO: Secret GROQ_API_KEY não configurado.")
+        sys.exit(1)
+
+    # Analisa o vídeo e gera legenda com IA
+    print("Analisando vídeo e gerando legenda...")
+    caption = analyze_and_generate_caption(str(video.resolve()))
+    print(f"\nLegenda final:\n{caption}\n")
+
     # Posta no TikTok
+    print("Postando no TikTok...")
     success = post_to_tiktok(
         video_path=str(video.resolve()),
         caption=caption,
@@ -63,7 +65,6 @@ def main():
     )
 
     if success:
-        # Move para posted/
         dest = POSTED_DIR / video.name
         shutil.move(str(video), str(dest))
         print(f"Movido para posted/: {video.name}")
