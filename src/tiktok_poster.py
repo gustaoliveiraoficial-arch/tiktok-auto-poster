@@ -30,6 +30,8 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
+                "--disable-web-security",
+                "--disable-features=IsolateOrigins,site-per-process",
             ]
         )
 
@@ -38,18 +40,40 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            extra_http_headers={
+                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+            }
         )
+
+        # Remove sinais de automação
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en'] });
+            window.chrome = { runtime: {} };
+        """)
 
         # Carrega cookies de sessão
         context.add_cookies(cookies)
         page = context.new_page()
 
         try:
+            # Vai primeiro para o tiktok.com para garantir que os cookies sejam reconhecidos
+            print("Carregando TikTok...")
+            page.goto("https://www.tiktok.com", timeout=30000)
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+            time.sleep(2)
+
+            print(f"URL atual: {page.url}")
+
             print("Acessando TikTok Studio...")
             page.goto("https://www.tiktok.com/tiktokstudio/upload", timeout=30000)
-            page.wait_for_load_state("networkidle", timeout=30000)
+            page.wait_for_load_state("domcontentloaded", timeout=30000)
+            time.sleep(3)
+
+            print(f"URL Studio: {page.url}")
 
             # Verifica se está logado
             if "login" in page.url.lower():
@@ -141,7 +165,7 @@ def save_cookies_from_browser(output_path: str = "tiktok_cookies.json"):
         print("Você tem 5 minutos.")
         print("="*50 + "\n")
 
-        # Aguarda o usuário logar (URL muda do /login) — 5 minutos
+        # Aguarda o usuário logar — até 5 minutos
         try:
             page.wait_for_url(
                 lambda url: "login" not in url and "tiktok.com" in url,
@@ -152,8 +176,20 @@ def save_cookies_from_browser(output_path: str = "tiktok_cookies.json"):
             browser.close()
             return
 
-        time.sleep(3)
-        cookies = context.cookies()
+        # Aguarda o cookie sessionid ser setado (prova que o login completou)
+        print("Login detectado. Aguardando cookies de sessão...")
+        for _ in range(20):
+            cookies = context.cookies()
+            session_cookies = [c for c in cookies if c["name"] in ("sessionid", "sid_tt", "sid_guard")]
+            if session_cookies:
+                print(f"Cookie de sessão encontrado: {session_cookies[0]['name']}")
+                break
+            time.sleep(1)
+        else:
+            print("Aviso: sessionid não encontrado, salvando cookies disponíveis mesmo assim...")
+            cookies = context.cookies()
+
+        time.sleep(2)
 
         with open(output_path, "w") as f:
             json.dump(cookies, f, indent=2)
