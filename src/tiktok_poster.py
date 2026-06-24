@@ -78,19 +78,22 @@ def load_cookies(cookies_json: str) -> list:
 
 
 def _is_logged_in(page) -> bool:
-    """Verifica se o TikTok reconheceu a sessão (por conteúdo, não URL)."""
+    """Verifica se o TikTok reconheceu a sessão (por conteúdo da página)."""
     try:
-        # Se aparecer modal de login ou botão de entrar, não está logado
-        login_modal = page.locator(
-            "div[class*='login-modal'], "
-            "div[data-e2e='login-modal'], "
-            "button:has-text('Entrar'), "
-            "button:has-text('Log in'), "
-            "a[href*='/login']"
-        )
-        if login_modal.count() > 0:
-            print("Detectado: modal/botão de login visível na página.")
-            return False
+        # Detecta página/modal de login por texto visível
+        page_text = page.inner_text("body")
+        login_indicators = [
+            "Entrar no TikTok",
+            "Log in to TikTok",
+            "Usar código QR",
+            "Use QR code",
+            "Continuar com Facebook",
+            "Continue with Facebook",
+        ]
+        for indicator in login_indicators:
+            if indicator in page_text:
+                print(f"Detectado indicador de login: '{indicator}'")
+                return False
 
         # Se o input de upload ou área de drop existir, está logado
         upload_area = page.locator(
@@ -102,10 +105,8 @@ def _is_logged_in(page) -> bool:
         if upload_area.count() > 0:
             return True
 
-        # Fallback: checa cookies de sessão diretamente
-        cookies = page.context.cookies()
-        session = [c for c in cookies if c["name"] in ("sessionid", "sessionid_ss", "sid_tt")]
-        return len(session) > 0
+        # Ambíguo — assume logado se não encontrou sinais de login
+        return True
 
     except Exception as e:
         print(f"Erro ao verificar login: {e}")
@@ -131,8 +132,9 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
     print(f"Cookie de sessão encontrado: {session[0]['name']}")
 
     with sync_playwright() as p:
+        # headless=False + DISPLAY=:99 (xvfb) evita detecção de browser headless pelo TikTok
         browser = p.chromium.launch(
-            headless=True,
+            headless=False,
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",

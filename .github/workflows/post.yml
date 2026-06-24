@@ -54,16 +54,20 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Instala FFmpeg
+      - name: Instala FFmpeg e Xvfb
         if: steps.check_queue.outputs.count != '0'
-        run: sudo apt-get install -y ffmpeg
+        run: sudo apt-get install -y ffmpeg xvfb
 
       - name: Posta vídeo no TikTok
         if: steps.check_queue.outputs.count != '0'
         env:
           TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: python main.py
+          DISPLAY: ':99'
+        run: |
+          Xvfb :99 -screen 0 1280x900x24 &
+          sleep 2
+          python main.py
 
       - name: Commita alterações (vídeo movido de queue/ para posted/)
         if: steps.check_queue.outputs.count != '0'
