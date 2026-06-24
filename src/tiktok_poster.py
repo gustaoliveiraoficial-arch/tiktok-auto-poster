@@ -208,6 +208,7 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
                 time.sleep(4)
                 print(f"URL alternativa: {page.url}")
 
+                time.sleep(3)
                 if "login" in page.url.lower() or not _is_logged_in(page):
                     print("ERRO: Ambas as URLs mostraram tela de login. Renove os cookies.")
                     page.screenshot(path="debug_screenshot.png")
@@ -216,10 +217,10 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
 
             print("Sessão válida! Prosseguindo com upload...")
 
-            # Aguarda o input de arquivo estar disponível
+            # Aguarda o input de arquivo estar no DOM (pode ser hidden por CSS — normal no TikTok Studio)
             print("Aguardando input de arquivo...")
-            page.wait_for_selector("input[type='file']", timeout=30000)
-            file_input = page.locator("input[type='file']").first
+            page.wait_for_selector("input[type='file']", state="attached", timeout=30000)
+            file_input = page.locator("input[type='file'][accept*='video']").first
             file_input.set_input_files(video_path)
             print(f"Arquivo enviado: {video_path}")
 
