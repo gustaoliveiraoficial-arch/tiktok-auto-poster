@@ -74,10 +74,12 @@ jobs:
           git diff --staged --quiet || git commit -m "posted: $(date '+%Y-%m-%d %H:%M BRT')"
           git push
 
-      - name: Salva screenshot de debug (se falhar)
+      - name: Salva screenshots de debug (se falhar)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-screenshot
-          path: debug_screenshot.png
+          name: debug-screenshots
+          path: |
+            debug_screenshot.png
+            debug_screenshot_studio.png
           if-no-files-found: ignore

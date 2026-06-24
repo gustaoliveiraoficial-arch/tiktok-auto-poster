@@ -5,11 +5,111 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 
+# Script stealth avançado — evita detecção de automação
+STEALTH_SCRIPT = """
+// Remove webdriver
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+// Plugins reais
+Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+        const plugins = [
+            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+            { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+        ];
+        plugins.item = (i) => plugins[i];
+        plugins.namedItem = (name) => plugins.find(p => p.name === name);
+        plugins.refresh = () => {};
+        Object.defineProperty(plugins, 'length', { value: plugins.length });
+        return plugins;
+    }
+});
+
+// Linguagens
+Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+
+// Chrome runtime
+window.chrome = {
+    runtime: {
+        connect: () => {},
+        sendMessage: () => {},
+        onMessage: { addListener: () => {}, removeListener: () => {} },
+        id: 'random-extension-id',
+    },
+    loadTimes: () => ({}),
+    csi: () => ({}),
+    app: {},
+};
+
+// Permissions
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) =>
+    parameters.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : originalQuery(parameters);
+
+// Hardware concurrency realista
+Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+// Platform
+Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+
+// WebGL vendor
+const getParameter = WebGLRenderingContext.prototype.getParameter;
+WebGLRenderingContext.prototype.getParameter = function(parameter) {
+    if (parameter === 37445) return 'Intel Inc.';
+    if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+    return getParameter.call(this, parameter);
+};
+
+// Screen
+Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+"""
+
+
 def load_cookies(cookies_json: str) -> list:
     try:
         return json.loads(cookies_json)
     except Exception:
         return []
+
+
+def _is_logged_in(page) -> bool:
+    """Verifica se o TikTok reconheceu a sessão (por conteúdo, não URL)."""
+    try:
+        # Se aparecer modal de login ou botão de entrar, não está logado
+        login_modal = page.locator(
+            "div[class*='login-modal'], "
+            "div[data-e2e='login-modal'], "
+            "button:has-text('Entrar'), "
+            "button:has-text('Log in'), "
+            "a[href*='/login']"
+        )
+        if login_modal.count() > 0:
+            print("Detectado: modal/botão de login visível na página.")
+            return False
+
+        # Se o input de upload ou área de drop existir, está logado
+        upload_area = page.locator(
+            "input[type='file'], "
+            "div[class*='upload-drag'], "
+            "div[class*='upload-wrapper'], "
+            "div[data-e2e='upload-container']"
+        )
+        if upload_area.count() > 0:
+            return True
+
+        # Fallback: checa cookies de sessão diretamente
+        cookies = page.context.cookies()
+        session = [c for c in cookies if c["name"] in ("sessionid", "sessionid_ss", "sid_tt")]
+        return len(session) > 0
+
+    except Exception as e:
+        print(f"Erro ao verificar login: {e}")
+        return False
 
 
 def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
@@ -22,6 +122,14 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
         print("ERRO: Nenhum cookie do TikTok encontrado.")
         return False
 
+    # Verifica sessionid
+    session = [c for c in cookies if c["name"] in ("sessionid", "sessionid_ss", "sid_tt")]
+    if not session:
+        print("ERRO: sessionid não encontrado nos cookies.")
+        return False
+
+    print(f"Cookie de sessão encontrado: {session[0]['name']}")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -32,6 +140,12 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
                 "--disable-blink-features=AutomationControlled",
                 "--disable-web-security",
                 "--disable-features=IsolateOrigins,site-per-process",
+                "--window-size=1280,900",
+                "--disable-extensions",
+                "--no-first-run",
+                "--disable-infobars",
+                "--hide-scrollbars",
+                "--mute-audio",
             ]
         )
 
@@ -43,81 +157,125 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
             extra_http_headers={
-                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-            }
+                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "Upgrade-Insecure-Requests": "1",
+            },
+            locale="pt-BR",
+            timezone_id="America/Sao_Paulo",
         )
 
-        # Remove sinais de automação
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en'] });
-            window.chrome = { runtime: {} };
-        """)
+        # Aplica script stealth antes de qualquer página carregar
+        context.add_init_script(STEALTH_SCRIPT)
 
         # Carrega cookies de sessão
         context.add_cookies(cookies)
         page = context.new_page()
 
         try:
-            # Vai primeiro para o tiktok.com para garantir que os cookies sejam reconhecidos
-            print("Carregando TikTok...")
-            page.goto("https://www.tiktok.com", timeout=30000)
-            page.wait_for_load_state("domcontentloaded", timeout=15000)
-            time.sleep(2)
-
+            # Passo 1: Carrega página principal para ativar cookies
+            print("Carregando TikTok principal...")
+            page.goto("https://www.tiktok.com", timeout=45000, wait_until="domcontentloaded")
+            time.sleep(3)
             print(f"URL atual: {page.url}")
 
-            print("Acessando TikTok Studio...")
-            page.goto("https://www.tiktok.com/tiktokstudio/upload", timeout=30000)
-            page.wait_for_load_state("domcontentloaded", timeout=30000)
-            time.sleep(3)
-
+            # Passo 2: Tenta TikTok Studio upload
+            print("Acessando TikTok Studio Upload...")
+            page.goto("https://www.tiktok.com/tiktokstudio/upload", timeout=45000, wait_until="domcontentloaded")
+            time.sleep(4)
             print(f"URL Studio: {page.url}")
 
-            # Verifica se está logado
+            # Verifica login por URL
             if "login" in page.url.lower():
-                print("ERRO: Sessão expirada. Renove os cookies do TikTok.")
+                print("ERRO: Redirecionado para login. Sessão expirada.")
+                page.screenshot(path="debug_screenshot.png")
                 browser.close()
                 return False
 
-            print("Fazendo upload do vídeo...")
-            # Aguarda o input de arquivo aparecer
+            # Verifica login por conteúdo
+            time.sleep(2)
+            if not _is_logged_in(page):
+                print("AVISO: TikTok Studio detectou bot. Tentando URL alternativa...")
+                page.screenshot(path="debug_screenshot_studio.png")
+
+                # Tenta URL alternativa
+                page.goto("https://www.tiktok.com/upload", timeout=45000, wait_until="domcontentloaded")
+                time.sleep(4)
+                print(f"URL alternativa: {page.url}")
+
+                if "login" in page.url.lower() or not _is_logged_in(page):
+                    print("ERRO: Ambas as URLs mostraram tela de login. Renove os cookies.")
+                    page.screenshot(path="debug_screenshot.png")
+                    browser.close()
+                    return False
+
+            print("Sessão válida! Prosseguindo com upload...")
+
+            # Aguarda o input de arquivo estar disponível
+            print("Aguardando input de arquivo...")
+            page.wait_for_selector("input[type='file']", timeout=30000)
             file_input = page.locator("input[type='file']").first
             file_input.set_input_files(video_path)
+            print(f"Arquivo enviado: {video_path}")
 
-            # Aguarda o vídeo carregar (barra de progresso some)
+            # Aguarda processamento do vídeo (barra de progresso aparecer e sumir)
             print("Aguardando processamento do vídeo...")
-            page.wait_for_selector(
-                "div[class*='upload-progress']",
-                state="hidden",
-                timeout=120000
-            )
+            try:
+                page.wait_for_selector(
+                    "div[class*='upload-progress'], div[class*='progress-bar']",
+                    timeout=15000
+                )
+                page.wait_for_selector(
+                    "div[class*='upload-progress'], div[class*='progress-bar']",
+                    state="hidden",
+                    timeout=180000
+                )
+            except PlaywrightTimeout:
+                # Alguns layouts não mostram barra — aguarda tempo fixo
+                print("Barra de progresso não detectada, aguardando 30s...")
+                time.sleep(30)
+
             time.sleep(3)
 
             # Preenche a legenda
             print("Preenchendo legenda...")
-            caption_box = page.locator(
-                "div[contenteditable='true']"
-            ).first
-            caption_box.click()
-            # Limpa conteúdo existente e digita a legenda
-            caption_box.press("Control+a")
-            caption_box.type(caption, delay=30)
+            caption_box = page.locator("div[contenteditable='true']").first
 
+            # Aguarda a caixa de legenda ficar disponível
+            caption_box.wait_for(timeout=20000)
+            caption_box.click()
+            time.sleep(1)
+
+            # Limpa conteúdo existente
+            caption_box.press("Control+a")
+            time.sleep(0.5)
+            caption_box.press("Delete")
+            time.sleep(0.5)
+
+            # Digita a legenda com velocidade humana
+            caption_box.type(caption, delay=25)
             time.sleep(2)
 
             # Clica em Postar
-            print("Postando...")
+            print("Clicando em Postar...")
             post_btn = page.locator(
-                "button:has-text('Postar'), button:has-text('Post')"
+                "button:has-text('Postar'), button:has-text('Post'), "
+                "button[data-e2e='post-btn']"
             ).first
+
+            post_btn.wait_for(timeout=15000)
             post_btn.click()
 
-            # Aguarda confirmação
+            # Aguarda confirmação de sucesso
+            print("Aguardando confirmação...")
             page.wait_for_selector(
-                "div[class*='success'], div[class*='modal-success']",
-                timeout=30000
+                "div[class*='success'], div[class*='modal-success'], "
+                "div[data-e2e='post-success'], span:has-text('publicado'), "
+                "span:has-text('posted successfully')",
+                timeout=45000
             )
 
             print("Vídeo postado com sucesso!")
@@ -126,7 +284,6 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
 
         except PlaywrightTimeout as e:
             print(f"Timeout durante o post: {e}")
-            # Tira screenshot para debug
             try:
                 page.screenshot(path="debug_screenshot.png")
                 print("Screenshot salvo em debug_screenshot.png")
@@ -152,7 +309,7 @@ def save_cookies_from_browser(output_path: str = "tiktok_cookies.json"):
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=False,
-            channel="chrome",  # Usa Chrome instalado (interface visual)
+            channel="chrome",
             args=["--start-maximized"]
         )
         context = browser.new_context(no_viewport=True)
@@ -165,7 +322,6 @@ def save_cookies_from_browser(output_path: str = "tiktok_cookies.json"):
         print("Você tem 5 minutos.")
         print("="*50 + "\n")
 
-        # Aguarda o usuário logar — até 5 minutos
         try:
             page.wait_for_url(
                 lambda url: "login" not in url and "tiktok.com" in url,
@@ -176,11 +332,12 @@ def save_cookies_from_browser(output_path: str = "tiktok_cookies.json"):
             browser.close()
             return
 
-        # Aguarda o cookie sessionid ser setado (prova que o login completou)
         print("Login detectado. Aguardando cookies de sessão...")
-        for _ in range(20):
+        for _ in range(30):
             cookies = context.cookies()
-            session_cookies = [c for c in cookies if c["name"] in ("sessionid", "sid_tt", "sid_guard")]
+            session_cookies = [c for c in cookies if c["name"] in (
+                "sessionid", "sessionid_ss", "sid_tt", "sid_guard"
+            )]
             if session_cookies:
                 print(f"Cookie de sessão encontrado: {session_cookies[0]['name']}")
                 break
