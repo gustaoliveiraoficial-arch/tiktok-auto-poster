@@ -113,6 +113,35 @@ def _is_logged_in(page) -> bool:
         return False
 
 
+def _dismiss_popups(page) -> None:
+    """Dispensa overlays de tutorial/joyride e popups que bloqueiam cliques."""
+    try:
+        # Tenta clicar em botões de dispensa comuns
+        dismiss_texts = ["Entendi", "Got it", "OK", "Skip", "Pular", "Close", "×", "✕"]
+        for text in dismiss_texts:
+            btn = page.locator(f"button:has-text('{text}')").first
+            if btn.count() > 0:
+                try:
+                    btn.click(timeout=3000)
+                    print(f"Popup dispensado via botão '{text}'")
+                    time.sleep(1)
+                    return
+                except Exception:
+                    continue
+
+        # Se overlay de joyride ainda existir, remove via JS
+        overlay_count = page.locator("div.react-joyride__overlay, div[data-test-id='overlay']").count()
+        if overlay_count > 0:
+            page.evaluate("""
+                const overlays = document.querySelectorAll('.react-joyride__overlay, [data-test-id="overlay"], #react-joyride-portal');
+                overlays.forEach(el => el.remove());
+            """)
+            print("Overlay de joyride removido via JS")
+            time.sleep(0.5)
+    except Exception as e:
+        print(f"Aviso ao dispensar popup: {e}")
+
+
 def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
     """
     Faz upload de um vídeo no TikTok com a legenda fornecida.
@@ -243,6 +272,9 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
 
             time.sleep(3)
 
+            # Dispensa qualquer popup/overlay antes de interagir
+            _dismiss_popups(page)
+
             # Preenche a legenda
             print("Preenchendo legenda...")
             caption_box = page.locator("div[contenteditable='true']").first
@@ -261,6 +293,9 @@ def post_to_tiktok(video_path: str, caption: str, cookies_json: str) -> bool:
             # Digita a legenda com velocidade humana
             caption_box.type(caption, delay=25)
             time.sleep(2)
+
+            # Dispensa popups novamente antes de clicar em Postar
+            _dismiss_popups(page)
 
             # Clica em Postar
             print("Clicando em Postar...")
